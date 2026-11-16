@@ -76,3 +76,21 @@ docs/DECISIONS.md
 ## Próximo incremento
 
 I02: refinar largada, staging/rollout e detecção de invasão, aprimorar o controle da transmissão e o desempenho gráfico. Só depois evoluir para garagem, presets de preparação e telemetria comparativa.
+
+
+## Incremento I02 experimental: preparação de pneus e câmera
+
+**Em branch separada, sem integração à main.**
+
+- **B (segurar, antes do staging)**: faz burnout e aquece o pneu. Borracha fria tem aderência inferior; aquecimento moderado melhora o grip; aquecimento excessivo volta a prejudicar.
+- **ESPAÇO**: inicia staging/contagem (mantidas as regras simplificadas do I01).
+- **TAB**: alterna três câmeras (chase alta, chase baixa lateral e hood).
+- Indicador de temperatura, janela de trabalho e fator de aderência na HUD.
+- Fumaça procedural simplificada, rotação visual das rodas e FOV que cresce com a velocidade.
+- As constantes são aproximações originais de game design: não são curvas de pneu calibradas nem coeficientes obtidos de outros jogos.
+
+### Origem e limites
+
+Referência estudada: documentação de engenharia reversa de No Limit Drag Racing 2 compartilhada pelo usuário (apenas conceitos de alto nível sobre fluxo de corrida, burnout, pneus, câmbio e preparação). **Nenhum APK, asset, código decompilado ou parâmetro proprietário foi incorporado ao projeto.**
+
+As melhorias visuais deste incremento são efeitos procedurais, não substituem um veículo licenciado/modelado profissionalmente, iluminação e áudio de alta qualidade. Uma revisão de jogabilidade presencial ainda é necessária.

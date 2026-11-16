@@ -17,6 +17,7 @@ var acceleration_mps2: float = 0.0
 var rpm: float = 1100.0
 var wheel_rpm: float = 0.0
 var slip_ratio: float = 0.0
+var tire_preparation_grip_multiplier: float = 1.0
 var throttle: float = 0.0
 var steer: float = 0.0
 var gear: int = 1
@@ -38,6 +39,7 @@ func reset() -> void:
 	rpm = config.idle_rpm
 	wheel_rpm = 0.0
 	slip_ratio = 0.0
+	tire_preparation_grip_multiplier = 1.0
 	throttle = 0.0
 	steer = 0.0
 	gear = 1
@@ -86,7 +88,7 @@ func step(dt: float, requested_throttle: float, requested_steer: float, braking:
 	var rear_normal_n: float = config.mass_kg * G * config.rear_weight_fraction
 	rear_normal_n += config.mass_kg * maxf(acceleration_mps2, 0.0) * config.center_of_gravity_height_m / config.wheelbase_m
 	rear_normal_n = clampf(rear_normal_n, 0.0, config.mass_kg * G * 0.87)
-	var traction_limit_n: float = maxf(100.0, rear_normal_n * config.tire_mu * config.track_grip)
+	var traction_limit_n: float = maxf(100.0, rear_normal_n * config.tire_mu * config.track_grip * tire_preparation_grip_multiplier)
 	# Excess torque increases spin, and high spin reduces the available tire force.
 	# This is NOT a full tire force-vs-slip or individual-wheel dynamics model.
 	var oversupply: float = demanded_force_n / traction_limit_n
