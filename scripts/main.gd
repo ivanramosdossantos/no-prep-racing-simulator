@@ -4,6 +4,7 @@ extends Node3D
 
 const VehicleSimulator = preload("res://scripts/simulation/vehicle_simulator.gd")
 const VehicleConfig = preload("res://scripts/simulation/vehicle_config.gd")
+const TirePreparation = preload("res://scripts/simulation/tire_preparation.gd")
 const RaceSession = preload("res://scripts/race/race_session.gd")
 const TrackBuilder = preload("res://scripts/visuals/track_builder.gd")
 const VehicleBuilder = preload("res://scripts/visuals/vehicle_builder.gd")
@@ -11,6 +12,10 @@ const VehicleBuilder = preload("res://scripts/visuals/vehicle_builder.gd")
 var config: NoPrepVehicleConfig
 var car_sim: NoPrepVehicleSimulator
 var race: NoPrepRaceSession
+var tire_prep: NoPrepTirePreparation
+var camera_mode: int = 0
+var tire_label: Label
+var smoke_puffs: Array[MeshInstance3D] = []
 var car: Node3D
 var chase_camera: Camera3D
 var tree: Dictionary
@@ -29,9 +34,11 @@ func _ready() -> void:
 	config = VehicleConfig.new()
 	car_sim = VehicleSimulator.new(config)
 	race = RaceSession.new()
+	tire_prep = TirePreparation.new()
 	_setup_environment()
 	tree = TrackBuilder.build(self)
 	car = VehicleBuilder.build(self)
+	_build_smoke()
 	chase_camera = Camera3D.new()
 	chase_camera.name = "Chase camera"
 	chase_camera.current = true
@@ -67,11 +74,21 @@ func _physics_process(dt: float) -> void:
 	var left: float = 1.0 if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT) else 0.0
 	input_throttle = move_toward(input_throttle, 1.0 if wants_throttle else 0.0, dt * 1.7)
 	input_steer = move_toward(input_steer, right - left, dt * 4.0)
+	if race.phase == NoPrepRaceSession.Phase.READY:
+		var burning: bool = Input.is_key_pressed(KEY_B)
+		tire_prep.step(dt, burning, false)
+		car_sim.rpm = lerpf(config.idle_rpm, config.launch_rpm * 1.55, 1.0 if burning else 0.0)
+		car_sim.tire_preparation_grip_multiplier = tire_prep.grip_multiplier()
+		return
 	if race.phase == NoPrepRaceSession.Phase.COUNTDOWN:
+		tire_prep.step(dt, false, false)
+		car_sim.tire_preparation_grip_multiplier = tire_prep.grip_multiplier()
 		race.step(dt, input_throttle, car_sim.distance_m, car_sim.speed_mps, car_sim.trajectory_foul)
 		return
 	if race.phase != NoPrepRaceSession.Phase.RUNNING:
 		return
+	tire_prep.step(dt, false, true)
+	car_sim.tire_preparation_grip_multiplier = tire_prep.grip_multiplier()
 	car_sim.step(dt, input_throttle, input_steer, 1.0 if wants_brake else 0.0)
 	race.step(dt, input_throttle, car_sim.distance_m, car_sim.speed_mps, car_sim.trajectory_foul)
 
@@ -92,6 +109,9 @@ func _input(event: InputEvent) -> void:
 			race.stage()
 		KEY_R:
 			_restart()
+		KEY_TAB:
+			camera_mode = (camera_mode + 1) % 3
+			_snap_visuals()
 		KEY_E:
 			if race.phase == NoPrepRaceSession.Phase.RUNNING:
 				car_sim.shift_up()
@@ -110,6 +130,7 @@ func _input(event: InputEvent) -> void:
 func _restart() -> void:
 	car_sim.reset()
 	race.reset()
+	tire_prep.reset()
 	input_throttle = 0.0
 	input_steer = 0.0
 	_snap_visuals()
@@ -117,8 +138,8 @@ func _restart() -> void:
 func _snap_visuals() -> void:
 	car.position = Vector3(car_sim.lane_x_m, 0.0, -car_sim.distance_m)
 	car.rotation.y = -car_sim.heading_rad
-	chase_camera.position = car.position + Vector3(2.2, 4.8, 10.0)
-	chase_camera.look_at(car.position + Vector3(0.0, 1.25, -11.0))
+	chase_camera.position = _camera_position()
+	chase_camera.look_at(_camera_focus())
 
 func _update_visuals(dt: float) -> void:
 	car.position = Vector3(car_sim.lane_x_m, 0.0, -car_sim.distance_m)
@@ -126,9 +147,65 @@ func _update_visuals(dt: float) -> void:
 	# Shaking is purely visual; physical state is not changed by it.
 	var shake := minf(0.018, car_sim.slip_ratio * 0.012)
 	car.position.y = sin(elapsed_visual_s * 40.0) * shake
-	var target: Vector3 = car.position + Vector3(2.2, 4.8, 10.0)
-	chase_camera.position = chase_camera.position.lerp(target, minf(1.0, 6.0 * dt))
-	chase_camera.look_at(car.position + Vector3(0.0, 1.25, -11.0))
+	var target: Vector3 = _camera_position()
+	chase_camera.position = chase_camera.position.lerp(target, minf(1.0, 11.0 * dt) if camera_mode == 2 else minf(1.0, 6.0 * dt))
+	chase_camera.look_at(_camera_focus())
+	chase_camera.fov = lerpf(chase_camera.fov, 67.0 + minf(21.0, car_sim.speed_kmh() * 0.10), minf(1.0, 5.0 * dt))
+	_update_smoke()
+	_spin_wheels(dt)
+
+func _camera_position() -> Vector3:
+	match camera_mode:
+		1:
+			return car.position + Vector3(-3.4, 2.1, 6.4)
+		2:
+			return car.global_transform * Vector3(0.0, 1.40, -2.14)
+	return car.position + Vector3(2.2, 4.8, 10.0)
+
+func _camera_focus() -> Vector3:
+	if camera_mode == 2:
+		return car.global_transform * Vector3(0.0, 1.15, -22.0)
+	return car.position + Vector3(0.0, 1.25, -11.0)
+
+func _build_smoke() -> void:
+	# Lightweight smoke made from original procedural spheres. No imported assets.
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.22
+	sphere.height = 0.44
+	var smoke_material := StandardMaterial3D.new()
+	smoke_material.albedo_color = Color(0.72, 0.76, 0.78, 0.37)
+	smoke_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	smoke_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	for i in range(12):
+		var puff := MeshInstance3D.new()
+		puff.name = "Burnout smoke %d" % i
+		puff.mesh = sphere
+		puff.material_override = smoke_material
+		puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		puff.visible = false
+		car.add_child(puff)
+		smoke_puffs.append(puff)
+
+func _update_smoke() -> void:
+	var burning: bool = race.phase == NoPrepRaceSession.Phase.READY and Input.is_key_pressed(KEY_B)
+	var spinning: bool = race.phase == NoPrepRaceSession.Phase.RUNNING and car_sim.slip_ratio > 0.35
+	for i in range(smoke_puffs.size()):
+		var puff := smoke_puffs[i]
+		puff.visible = burning or spinning
+		if not puff.visible:
+			continue
+		var t: float = fposmod(elapsed_visual_s * 1.7 + float(i) * 0.143, 1.0)
+		var side: float = -1.0 if i % 2 == 0 else 1.0
+		var scatter: float = sin(float(i) * 3.14 + elapsed_visual_s * 3.0) * 0.23
+		puff.position = Vector3(side * (1.04 + 0.23 * t) + scatter, 0.44 + t * 1.25, 1.45 + t * 1.50)
+		puff.scale = Vector3.ONE * (0.45 + t * 2.1)
+
+func _spin_wheels(dt: float) -> void:
+	var turns_per_second: float = car_sim.wheel_rpm / 60.0
+	if race.phase == NoPrepRaceSession.Phase.READY and Input.is_key_pressed(KEY_B):
+		turns_per_second = 11.0
+	for wheel in car.find_children("Wheel", "Node3D", true, false):
+		(wheel as Node3D).rotate_object_local(Vector3.UP, TAU * turns_per_second * dt)
 
 func _panel_style() -> StyleBoxFlat:
 	var p := StyleBoxFlat.new()
@@ -172,6 +249,8 @@ func _build_hud() -> void:
 	left.add_child(stats_label)
 	tune_label = _label("", 14, Color("f7c67e"))
 	left.add_child(tune_label)
+	tire_label = _label("", 14, Color("c3e0f5"))
+	left.add_child(tire_label)
 
 	var speed_panel := PanelContainer.new()
 	speed_panel.anchor_left = 1.0
@@ -210,7 +289,7 @@ func _build_hud() -> void:
 	footer.offset_bottom = -15
 	footer.add_theme_stylebox_override("panel", _panel_style())
 	root.add_child(footer)
-	footer_label = _label("ESPAÇO  LARGAR   |   W/S  ACELERAR/FREAR   |   A/D  DIRIGIR\nQ/E  MARCHAS   |   Z/X  TURBO   |   C/V  PNEUS   |   R  REINICIAR", 15, Color("e6e8ee"))
+	footer_label = _label("B  BURNOUT   |   ESPAÇO  STAGING   |   W/S  ACELERAR/FREAR   |   A/D  DIRIGIR\nQ/E  MARCHAS   |   TAB  CÂMERA   |   Z/X  TURBO   |   C/V  PNEUS   |   R  RESET", 14, Color("e6e8ee"))
 	footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	footer.add_child(footer_label)
 
@@ -219,7 +298,7 @@ func _update_hud() -> void:
 		return
 	match race.phase:
 		NoPrepRaceSession.Phase.READY:
-			status_label.text = "ESPAÇO PARA INICIAR"
+			status_label.text = "B: AQUECER PNEUS  |  ESPAÇO: STAGE"
 		NoPrepRaceSession.Phase.COUNTDOWN:
 			status_label.text = "PREPARE A LARGADA"
 		NoPrepRaceSession.Phase.RUNNING:
@@ -236,6 +315,7 @@ func _update_hud() -> void:
 	if race.phase == NoPrepRaceSession.Phase.FINISHED:
 		stats_label.text += "\nVELOCIDADE FINAL: %.1f km/h" % race.trap_kmh
 	tune_label.text = "TURBO: %.0f psi    PNEUS μ: %.2f" % [config.boost_psi, config.tire_mu]
+	tire_label.text = "BORRACHA: %02d%%  •  %s  |  GRIP: %.2fx" % [roundi(tire_prep.heat * 100.0), tire_prep.status(), tire_prep.grip_multiplier()]
 	speed_label.text = "%03d km/h" % roundi(car_sim.speed_kmh())
 	speed_sub_label.text = "MARCHA %d  |  %04d RPM" % [car_sim.gear, roundi(car_sim.rpm)]
 	countdown_label.text = "" if race.phase == NoPrepRaceSession.Phase.READY else race.light_label()

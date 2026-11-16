@@ -3,6 +3,7 @@ extends SceneTree
 
 const Config = preload("res://scripts/simulation/vehicle_config.gd")
 const Vehicle = preload("res://scripts/simulation/vehicle_simulator.gd")
+const TirePrep = preload("res://scripts/simulation/tire_preparation.gd")
 const Race = preload("res://scripts/race/race_session.gd")
 
 var checks: int = 0
@@ -28,6 +29,25 @@ func _drive(config: NoPrepVehicleConfig, throttle: float, ticks: int, auto_shift
 	return car
 
 func _run_all() -> void:
+	var prep := TirePrep.new()
+	var cold_grip: float = prep.grip_multiplier()
+	for i in range(400):
+		prep.step(1.0 / 120.0, true, false)
+	_check(prep.heat > 0.50, "Burnout warms tires at fixed physics steps")
+	_check(prep.grip_multiplier() > cold_grip, "Moderate burnout improves grip over cold tires")
+	for i in range(1000):
+		prep.step(1.0 / 120.0, true, false)
+	_check(prep.grip_multiplier() < 1.0, "Overheated tires lose launch traction")
+	prep.reset()
+	_check(is_equal_approx(prep.heat, 0.22), "Restart restores cold tire temperature")
+	var prep_traction := Vehicle.new()
+	var raw_traction := Vehicle.new()
+	prep_traction.tire_preparation_grip_multiplier = 1.05
+	raw_traction.tire_preparation_grip_multiplier = 0.78
+	for i in range(120):
+		prep_traction.step(1.0 / 120.0, 1.0, 0.0)
+		raw_traction.step(1.0 / 120.0, 1.0, 0.0)
+	_check(prep_traction.distance_m > raw_traction.distance_m, "Prepped tires transfer more launch force to the track")
 	var config := Config.new()
 	_check(config.validated(), "Stock setup is valid")
 	var idling := _drive(Config.new(), 0.0, 480)
