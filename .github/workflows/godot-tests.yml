@@ -1,0 +1,25 @@
+name: Godot simulation regressions
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deterministic-simulation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official Godot 4.7.2 binary
+        run: |
+          curl --fail --location --retry 3 --output godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q godot.zip
+          chmod +x Godot_v4.7.2-stable_linux.x86_64
+          mv Godot_v4.7.2-stable_linux.x86_64 /tmp/godot
+      - name: Import Godot project headlessly
+        run: /tmp/godot --headless --editor --path . --quit
+      - name: Run I01 simulation and race tests
+        run: /tmp/godot --headless --path . --script res://tests/run_tests.gd
